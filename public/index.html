@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>계약서 추출 시범</title>
+<style>
+  body { font-family: Pretendard, system-ui, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color:#111827; }
+  h2 { border-left: 4px solid #2563eb; padding-left: 8px; margin-top: 28px; }
+  label { display:block; font-size:13px; color:#374151; margin:10px 0 4px; }
+  input { width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; box-sizing:border-box; }
+  .ai input { border-color:#2563eb; background:#eff6ff; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  button { margin-top:16px; padding:10px 18px; border:0; border-radius:6px; background:#2563eb; color:#fff; font-size:14px; cursor:pointer; }
+  button:disabled { background:#9ca3af; cursor:not-allowed; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; margin:2px 4px 2px 0; }
+  .err { background:#fee2e2; color:#991b1b; } .warn { background:#fef3c7; color:#92400e; } .ok { background:#dcfce7; color:#166534; }
+  #msg { white-space:pre-wrap; font-size:13px; margin-top:8px; }
+</style>
+</head>
+<body>
+  <h2>1) 계약서 업로드</h2>
+  <input type="file" id="pdf" accept="application/pdf" />
+  <button id="btnExtract" onclick="runExtract()">AI 추출 시작</button>
+  <div id="valid"></div>
+
+  <h2>2) 계약 영역 (AI 자동 추출 · 원문과 대조 후 수정)</h2>
+  <div class="ai">
+    <label>계약 제목 *</label><input id="title" />
+    <div class="row">
+      <div><label>계약 상대방 *</label><input id="counterparty_name" /></div>
+      <div><label>상대방 사업자번호</label><input id="counterparty_biz_no" /></div>
+    </div>
+    <div class="row">
+      <div><label>계약 개시일 (YYYY-MM-DD)</label><input id="start_date" /></div>
+      <div><label>계약 종료일 (YYYY-MM-DD)</label><input id="end_date" /></div>
+    </div>
+    <div class="row">
+      <div><label>자동갱신 여부 (true/false)</label><input id="auto_renewal" /></div>
+      <div><label>갱신 통보 일자</label><input id="renewal_notice" /></div>
+    </div>
+  </div>
+
+  <h2>3) 기안·ERP·날인·보관 (작업자 직접 입력)</h2>
+  <div class="row">
+    <div><label>기안자 *</label><input id="drafter" /></div>
+    <div><label>계약서 검토자 *</label><input id="reviewer" /></div>
+    <div><label>직상위 결재자 *</label><input id="approver_direct" /></div>
+    <div><label>최종 결재자</label><input id="approver_final" /></div>
+    <div><label>기안문 문서번호 *</label><input id="draft_doc_no" /></div>
+    <div><label>기안문 날짜 (YYYY-MM-DD)</label><input id="draft_date" /></div>
+    <div><label>원본 날인자 *</label><input id="seal_person" /></div>
+    <div><label>날인 일자 및 일련번호 *</label><input id="seal_date_serial" /></div>
+    <div><label>ERP 계약번호 *</label><input id="erp_contract_no" /></div>
+    <div><label>원본 보관자 *</label><input id="archive_keeper" /></div>
+    <div><label>파일 작성자 *</label><input id="archive_file_author" /></div>
+    <div><label>표지 작성일 (YYYY-MM-DD)</label><input id="cover_created_date" /></div>
+  </div>
+
+  <button id="btnSave" onclick="runSave()" disabled>검증 후 저장</button>
+  <div id="msg"></div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// ▼▼▼ 여기 두 줄을 본인 값으로 교체하세요 (둘 다 공개 가능한 값) ▼▼▼
+const SUPABASE_URL = "https://bfafbypsiugcnmchtlhw.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmYWZieXBzaXVnY25tY2h0bGh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5Njk4NzcsImV4cCI6MjA5ODU0NTg3N30.Bd3bMAQa5eBm7o-Li8dMHFO5JOYSJQJeAfPnMPT5VWQ";
+// ▲▲▲ service_role 키는 절대 여기 넣지 마세요 ▲▲▲
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const CONTRACT_FIELDS = ["title","counterparty_name","counterparty_biz_no","start_date","end_date","auto_renewal","renewal_notice"];
+const MANUAL_FIELDS = ["drafter","reviewer","approver_direct","approver_final","draft_doc_no","draft_date","seal_person","seal_date_serial","erp_contract_no","archive_keeper","archive_file_author","cover_created_date"];
+let uploadedPath = null;
+
+window.runExtract = async () => {
+  const file = document.getElementById("pdf").files[0];
+  if (!file) return alert("PDF를 선택하세요.");
+  document.getElementById("btnExtract").disabled = true;
+  document.getElementById("msg").textContent = "업로드 및 추출 중...";
+
+  uploadedPath = `uploads/${Date.now()}_${file.name}`;
+  const up = await sb.storage.from("contracts").upload(uploadedPath, file);
+  if (up.error) { document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; document.getElementById("btnExtract").disabled = false; return; }
+
+  const r = await fetch("/.netlify/functions/extract", { method:"POST", body: JSON.stringify({ path: uploadedPath }) });
+  const data = await r.json();
+  document.getElementById("btnExtract").disabled = false;
+  if (!data.ok) { document.getElementById("msg").textContent = "추출 실패: " + data.error; return; }
+
+  for (const k of CONTRACT_FIELDS) {
+    const v = data.fields[k];
+    document.getElementById(k).value = (v === null || v === undefined) ? "" : v;
+  }
+  renderValidation(data.validation);
+  document.getElementById("msg").textContent = "추출 완료. 원문과 대조 후 수정하세요.";
+};
+
+function collect() {
+  const rec = {};
+  for (const k of [...CONTRACT_FIELDS, ...MANUAL_FIELDS]) {
+    let v = document.getElementById(k).value.trim();
+    if (v === "") v = null;
+    if (k === "auto_renewal") v = (v === "true") ? true : (v === "false" ? false : null);
+    rec[k] = v;
+  }
+  return rec;
+}
+
+function renderValidation(val) {
+  const box = document.getElementById("valid");
+  let html = "";
+  val.errors.forEach(e => html += `<span class="badge err">오류: ${e}</span>`);
+  val.warnings.forEach(w => html += `<span class="badge warn">경고: ${w}</span>`);
+  if (val.ok && !val.warnings.length) html = `<span class="badge ok">검증 통과</span>`;
+  box.innerHTML = html;
+  document.getElementById("btnSave").disabled = !val.ok;
+}
+
+window.runSave = async () => {
+  const record = collect();
+  const r = await fetch("/.netlify/functions/save", {
+    method:"POST",
+    body: JSON.stringify({ record, path: uploadedPath, humanConfirmed: true })
+  });
+  const data = await r.json();
+  if (data.ok) document.getElementById("msg").textContent = `저장 완료. contract id = ${data.id}`;
+  else document.getElementById("msg").textContent = "저장 실패: " + (data.errors ? data.errors.join(", ") : data.error);
+};
+</script>
+</body>
+</html>
