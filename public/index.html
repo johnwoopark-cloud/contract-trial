@@ -1,5 +1,8 @@
+import os
+os.makedirs("/home/user/out/public", exist_ok=True)
+os.makedirs("/home/user/out/netlify/functions/lib", exist_ok=True)
 
-index_html = r'''<!DOCTYPE html>
+html = """<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
@@ -7,50 +10,50 @@ index_html = r'''<!DOCTYPE html>
 <title>계약서 추출 시범</title>
 <style>
   body { font-family: Pretendard, system-ui, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color:#111827; }
-  h2 { border-left: 4px solid #2563eb; padding-left: 8px; margin-top: 28px; }
+  h2 { border-left: 4px solid #2563eb; padding-left: 8px; margin-top: 28px; font-size:18px; }
   label { display:block; font-size:13px; color:#374151; margin:10px 0 4px; }
   input { width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; box-sizing:border-box; }
   .ai input { border-color:#2563eb; background:#eff6ff; }
   .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   button { margin-top:16px; padding:10px 18px; border:0; border-radius:6px; background:#2563eb; color:#fff; font-size:14px; cursor:pointer; }
-  button.gray { background:#6b7280; }
   button:disabled { background:#9ca3af; cursor:not-allowed; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; margin:2px 4px 2px 0; }
   .err { background:#fee2e2; color:#991b1b; } .warn { background:#fef3c7; color:#92400e; } .ok { background:#dcfce7; color:#166534; }
   #msg { white-space:pre-wrap; font-size:13px; margin-top:8px; }
 
-  /* ================= 인쇄용 표 (화면에선 숨김) ================= */
-  #printArea { display:none; }
+  /* ===== 인쇄 표지 ===== */
+  #coverSheet { display:none; }
+  #coverSheet table { border-collapse:collapse; width:100%; font-size:13px; }
+  #coverSheet th, #coverSheet td { border:1px solid #000; padding:6px 8px; vertical-align:middle; }
+  #coverSheet .grp { font-weight:bold; text-align:center; background:#f3f4f6; width:70px; }
+  #coverSheet .lbl { font-weight:bold; text-align:center; width:150px; }
+  #coverSheet .req { color:#c00; }
+  #coverSheet .val { text-align:center; }
+  #coverSheet .note { font-size:11px; color:#374151; }
+  #coverSheet h3 { text-align:center; margin:0 0 10px; }
+
   @media print {
-    /* 인쇄 시 입력 화면 전체 숨기고 표만 보이게 */
-    body > *:not(#printArea) { display:none !important; }
-    #printArea { display:block !important; }
+    body { margin:0; padding:0; max-width:none; }
+    #app { display:none !important; }
+    #coverSheet { display:block !important; }
     @page { size: A4 portrait; margin: 12mm; }
   }
-  #printArea table { width:100%; border-collapse:collapse; font-size:12px; }
-  #printArea th, #printArea td { border:1px solid #000; padding:5px 7px; vertical-align:middle; }
-  #printArea .title { text-align:center; font-weight:bold; font-size:14px; }
-  #printArea .grp { text-align:center; font-weight:bold; width:70px; background:#f3f4f6; }
-  #printArea .fld { font-weight:bold; width:170px; }
-  #printArea .req { color:#c00; }        /* 필수(빨강 계열) */
-  #printArea .reqb { color:#1d4ed8; }    /* 계약 영역(파랑 계열) */
-  #printArea .note { font-size:10px; color:#374151; font-weight:normal; }
-  #printArea .val { min-height:14px; }
-  #printArea .caption { font-size:11px; margin:0 0 6px; }
 </style>
 </head>
 <body>
+
+<div id="app">
   <h2>1) 계약서 업로드</h2>
   <input type="file" id="pdf" accept="application/pdf" />
   <button id="btnExtract" onclick="runExtract()">AI 추출 시작</button>
-  <div id="fileinfo" style="font-size:12px;color:#6b7280;margin-top:6px;"></div>
+  <div id="origName" style="font-size:12px;color:#6b7280;margin-top:6px;"></div>
   <div id="valid"></div>
 
   <h2>2) 계약 영역 (AI 자동 추출 · 원문과 대조 후 수정)</h2>
   <div class="ai">
     <label>계약 제목 *</label><input id="title" />
     <div class="row">
-      <div><label>계약 상대방 * (우리 회사 아님)</label><input id="counterparty_name" /></div>
+      <div><label>계약 상대방 * (우리 회사가 아닌 상대방)</label><input id="counterparty_name" /></div>
       <div><label>상대방 사업자번호</label><input id="counterparty_biz_no" /></div>
     </div>
     <div class="row">
@@ -80,47 +83,112 @@ index_html = r'''<!DOCTYPE html>
   </div>
 
   <button id="btnSave" onclick="runSave()" disabled>검증 후 저장</button>
-  <button id="btnPrint" class="gray" onclick="doPrint()" disabled>표지 1페이지 인쇄</button>
+  <button id="btnPrint" onclick="window.print()" disabled>표지 1페이지 인쇄</button>
   <div id="msg"></div>
+</div>
 
-  <!-- ================= 인쇄 전용 표지 (저장 후 채워짐) ================= -->
-  <div id="printArea">
-    <p class="caption">* 표시된 항목은 필수 입력임</p>
-    <table>
-      <tr><td class="fld">계약 제목<span class="req">*</span></td><td class="grp" rowspan="6">계약</td><td class="val" colspan="2" id="p_title"></td></tr>
-      <tr><td class="fld">계약 상대방<span class="req">*</span></td><td class="val" id="p_counterparty_name"></td><td class="val" id="p_counterparty_biz_no"></td></tr>
-      <tr><td class="fld reqb">계약 개시일<span class="req">*</span><br><span class="note">(없으면 날인일)</span></td><td class="val" colspan="2" id="p_start_date"></td></tr>
-      <tr><td class="fld reqb">계약 종료일<span class="req">*</span><br><span class="note">(없으면 계약서 참조)</span></td><td class="val" colspan="2" id="p_end_date"></td></tr>
-      <tr><td class="fld reqb">자동갱신 여부<span class="req">*</span></td><td class="val" colspan="2" id="p_auto_renewal"></td></tr>
-      <tr><td class="fld reqb">갱신 통보 일자</td><td class="val" colspan="2" id="p_renewal_notice"></td></tr>
+<!-- ===== 인쇄 전용 표지 (저장 후 자동 채움) ===== -->
+<div id="coverSheet">
+  <h3>계약 관리 표지</h3>
+  <p style="font-size:11px;">* 표시된 항목은 필수 입력임</p>
+  <table>
+    <tr>
+      <td class="grp" rowspan="6">계약</td>
+      <td class="lbl">계약 제목 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_title"></td>
+    </tr>
+    <tr>
+      <td class="lbl">계약 상대방 <span class="req">*</span></td>
+      <td class="val" id="c_counterparty_name"></td>
+      <td class="val" id="c_counterparty_biz_no"></td>
+    </tr>
+    <tr>
+      <td class="lbl">계약 개시일 <span class="req">*</span><br><span class="note">(없으면 날인일)</span></td>
+      <td class="val" colspan="2" id="c_start_date"></td>
+    </tr>
+    <tr>
+      <td class="lbl">계약 종료일<br><span class="note">(없으면 계약서 참조)</span></td>
+      <td class="val" colspan="2" id="c_end_date"></td>
+    </tr>
+    <tr>
+      <td class="lbl">자동갱신 여부 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_auto_renewal"></td>
+    </tr>
+    <tr>
+      <td class="lbl">갱신 통보 일자</td>
+      <td class="val" colspan="2" id="c_renewal_notice"></td>
+    </tr>
 
-      <tr><td class="fld reqb">기안자<span class="req">*</span></td><td class="grp" rowspan="5">기안</td><td class="val" colspan="2" id="p_drafter"></td></tr>
-      <tr><td class="fld reqb">계약서 검토자<span class="req">*</span></td><td class="val" colspan="2" id="p_reviewer"></td></tr>
-      <tr><td class="fld reqb">직상위 결재자<span class="req">*</span></td><td class="val" colspan="2" id="p_approver_direct"></td></tr>
-      <tr><td class="fld reqb">최종 결재자</td><td class="val" colspan="2" id="p_approver_final"></td></tr>
-      <tr><td class="fld reqb">기안문<br><span class="note">(문서번호, 날짜)</span></td><td class="val" id="p_draft_doc_no"></td><td class="val" id="p_draft_date"></td></tr>
+    <tr>
+      <td class="grp" rowspan="5">기안</td>
+      <td class="lbl">기안자 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_drafter"></td>
+    </tr>
+    <tr>
+      <td class="lbl">계약서 검토자 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_reviewer"></td>
+    </tr>
+    <tr>
+      <td class="lbl">직상위 결재자 <span class="req">*</span></td>
+      <td class="val" id="c_approver_direct"></td>
+      <td class="val" id="c_approver_final"></td>
+    </tr>
+    <tr>
+      <td class="lbl">최종 결재자</td>
+      <td class="val" colspan="2" id="c_approver_final2"></td>
+    </tr>
+    <tr>
+      <td class="lbl">기안문<br><span class="note">(문서번호, 날짜)</span></td>
+      <td class="val" id="c_draft_doc_no"></td>
+      <td class="val" id="c_draft_date"></td>
+    </tr>
 
-      <tr><td class="fld req">원본 날인자<span class="req">*</span></td><td class="grp" rowspan="2">날인</td><td class="val" colspan="2" id="p_seal_person"></td></tr>
-      <tr><td class="fld req">날인 일자 및<br>일련번호<span class="req">*</span></td><td class="val" colspan="2" id="p_seal_date_serial"></td></tr>
+    <tr>
+      <td class="grp" rowspan="2">날인</td>
+      <td class="lbl">원본 날인자 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_seal_person"></td>
+    </tr>
+    <tr>
+      <td class="lbl">날인 일자 및 일련번호 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_seal_date_serial"></td>
+    </tr>
 
-      <tr><td class="fld req">ERP 계약번호<span class="req">*</span></td><td class="grp">ERP</td><td class="val" colspan="2" id="p_erp_contract_no"></td></tr>
+    <tr>
+      <td class="grp">ERP</td>
+      <td class="lbl">ERP 계약번호 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_erp_contract_no"></td>
+    </tr>
 
-      <tr><td class="fld req">날인 계약서 원본<br>보관자<span class="req">*</span></td><td class="grp" rowspan="4">보관</td><td class="val" colspan="2" id="p_archive_keeper"></td></tr>
-      <tr><td class="fld req">날인 계약서 파일<br>작성자<span class="req">*</span></td><td class="val" colspan="2" id="p_archive_file_author"></td></tr>
-      <tr><td class="fld req">계약서 표지 작성일<span class="req">*</span></td><td class="val" colspan="2" id="p_cover_created_date"></td></tr>
-      <tr><td class="fld req">날인 계약서 파일<br>업로드<span class="req">*</span></td><td class="val" colspan="2">ERP 입력 -&gt; 이 페이지를 출력 -&gt; 날인 계약서 앞면에 편철하여 스캔 후 업로드</td></tr>
-    </table>
-  </div>
+    <tr>
+      <td class="grp" rowspan="4">보관</td>
+      <td class="lbl">날인 계약서 원본 보관자 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_archive_keeper"></td>
+    </tr>
+    <tr>
+      <td class="lbl">날인 계약서 파일 작성자 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_archive_file_author"></td>
+    </tr>
+    <tr>
+      <td class="lbl">계약서 표지 작성일 <span class="req">*</span></td>
+      <td class="val" colspan="2" id="c_cover_created_date"></td>
+    </tr>
+    <tr>
+      <td class="lbl">날인 계약서 파일 업로드 <span class="req">*</span></td>
+      <td class="val" colspan="2" class="note">ERP 입력 -&gt; 이 페이지를 출력 -&gt; 날인 계약서 앞면에 편철하여 스캔 후 업로드</td>
+    </tr>
+  </table>
+</div>
 
 <script type="module">
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-const SUPABASE_URL = "https://bfafbypsiugcnmchtlhw.supabase.co";      // ← 본인 Project URL
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmYWZieXBzaXVnY25tY2h0bGh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5Njk4NzcsImV4cCI6MjA5ODU0NTg3N30.Bd3bMAQa5eBm7o-Li8dMHFO5JOYSJQJeAfPnMPT5VWQ";    // ← 본인 anon key
+
+// ★ 본인 값으로 교체 (둘 다 공개 가능한 값) ★
+const SUPABASE_URL = "https://bfafbypsiugcnmchtlhw.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmYWZieXBzaXVnY25tY2h0bGh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5Njk4NzcsImV4cCI6MjA5ODU0NTg3N30.Bd3bMAQa5eBm7o-Li8dMHFO5JOYSJQJeAfPnMPT5VWQ";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CONTRACT_FIELDS = ["title","counterparty_name","counterparty_biz_no","start_date","end_date","auto_renewal","renewal_notice"];
 const MANUAL_FIELDS = ["drafter","reviewer","approver_direct","approver_final","draft_doc_no","draft_date","seal_person","seal_date_serial","erp_contract_no","archive_keeper","archive_file_author","cover_created_date"];
-const ALL_FIELDS = [...CONTRACT_FIELDS, ...MANUAL_FIELDS];
 let uploadedPath = null;
 let originalName = null;
 
@@ -130,16 +198,17 @@ window.runExtract = async () => {
   document.getElementById("btnExtract").disabled = true;
   document.getElementById("msg").textContent = "업로드 및 추출 중...";
 
-  // 파일명 sanitize (한글·공백 제거)
-  const ext = (file.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
-  const safe = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "");
-  const base = safe.length ? safe : "file";
-  uploadedPath = `uploads/${Date.now()}_${base}.${ext}`;
   originalName = file.name;
-  document.getElementById("fileinfo").textContent = "원본 파일명: " + originalName;
+  document.getElementById("origName").textContent = "원본 파일명: " + originalName;
+
+  // 경로 sanitize (한글/공백/특수문자 제거)
+  const ext = (file.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const stripped = file.name.replace(/\\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "");
+  const base = stripped.length ? stripped : "file";
+  uploadedPath = "uploads/" + Date.now() + "_" + base + "." + ext;
 
   const up = await sb.storage.from("contracts").upload(uploadedPath, file, { contentType: file.type || "application/pdf" });
-  if (up.error) { document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; document.getElementById("btnExtract").disabled = false; return; }
+  if (up.error) { document.getElementById("btnExtract").disabled = false; document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; return; }
 
   const r = await fetch("/.netlify/functions/extract", { method:"POST", body: JSON.stringify({ path: uploadedPath }) });
   const data = await r.json();
@@ -156,24 +225,48 @@ window.runExtract = async () => {
 
 function collect() {
   const rec = {};
-  for (const k of ALL_FIELDS) {
+  for (const k of [...CONTRACT_FIELDS, ...MANUAL_FIELDS]) {
     let v = document.getElementById(k).value.trim();
     if (v === "") v = null;
     if (k === "auto_renewal") v = (v === "true") ? true : (v === "false" ? false : null);
     rec[k] = v;
   }
-  rec.extra = { original_filename: originalName };  // 원본 한글명 보존
+  rec.extra = { original_filename: originalName };
   return rec;
 }
 
 function renderValidation(val) {
   const box = document.getElementById("valid");
   let html = "";
-  val.errors.forEach(e => html += `<span class="badge err">오류: ${e}</span>`);
-  val.warnings.forEach(w => html += `<span class="badge warn">경고: ${w}</span>`);
-  if (val.ok && !val.warnings.length) html = `<span class="badge ok">검증 통과</span>`;
+  val.errors.forEach(e => html += '<span class="badge err">오류: ' + e + '</span>');
+  val.warnings.forEach(w => html += '<span class="badge warn">경고: ' + w + '</span>');
+  if (val.ok && !val.warnings.length) html = '<span class="badge ok">검증 통과</span>';
   box.innerHTML = html;
   document.getElementById("btnSave").disabled = !val.ok;
+}
+
+function fillCover(rec) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v === null || v === undefined || v === "") ? "-" : v; };
+  set("c_title", rec.title);
+  set("c_counterparty_name", rec.counterparty_name);
+  set("c_counterparty_biz_no", rec.counterparty_biz_no);
+  set("c_start_date", rec.start_date);
+  set("c_end_date", rec.end_date);
+  set("c_auto_renewal", rec.auto_renewal === true ? "Y" : (rec.auto_renewal === false ? "N" : "-"));
+  set("c_renewal_notice", rec.renewal_notice);
+  set("c_drafter", rec.drafter);
+  set("c_reviewer", rec.reviewer);
+  set("c_approver_direct", rec.approver_direct);
+  set("c_approver_final", rec.approver_final);
+  set("c_approver_final2", rec.approver_final);
+  set("c_draft_doc_no", rec.draft_doc_no);
+  set("c_draft_date", rec.draft_date);
+  set("c_seal_person", rec.seal_person);
+  set("c_seal_date_serial", rec.seal_date_serial);
+  set("c_erp_contract_no", rec.erp_contract_no);
+  set("c_archive_keeper", rec.archive_keeper);
+  set("c_archive_file_author", rec.archive_file_author);
+  set("c_cover_created_date", rec.cover_created_date);
 }
 
 window.runSave = async () => {
@@ -181,35 +274,27 @@ window.runSave = async () => {
   const r = await fetch("/.netlify/functions/save", { method:"POST", body: JSON.stringify({ record, path: uploadedPath, humanConfirmed: true }) });
   const data = await r.json();
   if (data.ok) {
-    document.getElementById("msg").textContent = `저장 완료. contract id = ${data.id}`;
-    fillPrint(record);                              // 인쇄용 표 채우기
-    document.getElementById("btnPrint").disabled = false;  // 저장 후 인쇄 활성화
+    document.getElementById("msg").textContent = "저장 완료. contract id = " + data.id;
+    fillCover(record);
+    document.getElementById("btnPrint").disabled = false;  // 인쇄 버튼 활성화
   } else {
     document.getElementById("msg").textContent = "저장 실패: " + (data.errors ? data.errors.join(", ") : data.error);
   }
 };
-
-// 저장된 값으로 인쇄 표지 채우기
-function fillPrint(rec) {
-  const put = (id, v) => { const el = document.getElementById("p_" + id); if (el) el.textContent = (v===null||v===undefined||v==="") ? "" : (v===true?"Y":(v===false?"N":v)); };
-  for (const k of ALL_FIELDS) put(k, rec[k]);
-}
-
-window.doPrint = () => window.print();   // 브라우저 인쇄창 → 표지 1페이지만 출력
 </script>
 </body>
 </html>
-'''
+"""
 
 with open("/home/user/out/public/index.html", "w", encoding="utf-8") as f:
-    f.write(index_html)
+    f.write(html)
 
-print("index.html 생성 완료:", len(index_html), "bytes")
-
-# zip으로 묶기
-import zipfile
-zpath = "/home/user/contract-trial-v2.zip"
-with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-    z.write("/home/user/out/netlify/functions/extract.js", "extract.js")
-    z.write("/home/user/out/public/index.html", "index.html")
-print("zip 완료:", zpath)
+# 검증: 맨 위 / 맨 아래 확인
+lines = html.splitlines()
+print("=== 첫 3줄 ===")
+print("\n".join(lines[:3]))
+print("\n=== 마지막 3줄 ===")
+print("\n".join(lines[-3:]))
+print("\n총 bytes:", len(html.encode("utf-8")))
+print("Python 흔적 검사 (index_html / open( / zipfile):",
+      "index_html" in html, "open(" in html, "zipfile" in html)
