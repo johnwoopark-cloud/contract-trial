@@ -16,12 +16,14 @@
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; margin:2px 4px 2px 0; }
   .err { background:#fee2e2; color:#991b1b; } .warn { background:#fef3c7; color:#92400e; } .ok { background:#dcfce7; color:#166534; }
   #msg { white-space:pre-wrap; font-size:13px; margin-top:8px; }
+  .filename { font-size:12px; color:#6b7280; margin-top:6px; }
 </style>
 </head>
 <body>
   <h2>1) 계약서 업로드</h2>
   <input type="file" id="pdf" accept="application/pdf" />
   <button id="btnExtract" onclick="runExtract()">AI 추출 시작</button>
+  <div id="fname" class="filename"></div>
   <div id="valid"></div>
 
   <h2>2) 계약 영역 (AI 자동 추출 · 원문과 대조 후 수정)</h2>
@@ -62,15 +64,15 @@
 
 <script type="module">
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-// ▼▼▼ 여기 두 줄을 본인 값으로 교체하세요 (둘 다 공개 가능한 값) ▼▼▼
-const SUPABASE_URL = "https://bfafbypsiugcnmchtlhw.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmYWZieXBzaXVnY25tY2h0bGh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5Njk4NzcsImV4cCI6MjA5ODU0NTg3N30.Bd3bMAQa5eBm7o-Li8dMHFO5JOYSJQJeAfPnMPT5VWQ";
-// ▲▲▲ service_role 키는 절대 여기 넣지 마세요 ▲▲▲
+// anon key는 공개돼도 되는 키(업로드용). service_role 키는 절대 여기 넣지 않음.
+const SUPABASE_URL = "여기에_PROJECT_URL";
+const SUPABASE_ANON_KEY = "여기에_ANON_KEY";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const CONTRACT_FIELDS = ["title","counterparty_name","counterparty_biz_no","start_date","end_date","auto_renewal","renewal_notice"];
 const MANUAL_FIELDS = ["drafter","reviewer","approver_direct","approver_final","draft_doc_no","draft_date","seal_person","seal_date_serial","erp_contract_no","archive_keeper","archive_file_author","cover_created_date"];
 let uploadedPath = null;
+let originalName = null;   // 원본 한글 파일명 보관
 
 window.runExtract = async () => {
   const file = document.getElementById("pdf").files[0];
@@ -78,15 +80,30 @@ window.runExtract = async () => {
   document.getElementById("btnExtract").disabled = true;
   document.getElementById("msg").textContent = "업로드 및 추출 중...";
 
-  uploadedPath = `uploads/${Date.now()}_${file.name}`;
-  const up = await sb.storage.from("contracts").upload(uploadedPath, file);
-  if (up.error) { document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; document.getElementById("btnExtract").disabled = false; return; }
+  // ── 파일명 sanitize: 한글/공백/특수문자 제거, 확장자만 안전하게 유지 ──
+  const ext = (file.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const safeName = file.name
+    .replace(/\.[^.]+$/, "")            // 확장자 분리
+    .replace(/[^a-zA-Z0-9._-]/g, "");   // 허용문자 외 전부 제거(한글/공백 포함)
+  const base = safeName.length ? safeName : "file";  // 한글만 있어 비면 'file'
 
+  uploadedPath = `uploads/${Date.now()}_${base}.${ext}`;
+  originalName = file.name;             // 원본 한글명 보관
+  document.getElementById("fname").textContent = "원본 파일명: " + originalName;
+
+  // 1) 원본 PDF 업로드
+  const up = await sb.storage.from("contracts").upload(uploadedPath, file, {
+    contentType: file.type || "application/pdf"
+  });
+  document.getElementById("btnExtract").disabled = false;
+  if (up.error) { document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; return; }
+
+  // 2) 추출 함수 호출
   const r = await fetch("/.netlify/functions/extract", { method:"POST", body: JSON.stringify({ path: uploadedPath }) });
   const data = await r.json();
-  document.getElementById("btnExtract").disabled = false;
   if (!data.ok) { document.getElementById("msg").textContent = "추출 실패: " + data.error; return; }
 
+  // 3) AI 값 자동 채우기
   for (const k of CONTRACT_FIELDS) {
     const v = data.fields[k];
     document.getElementById(k).value = (v === null || v === undefined) ? "" : v;
@@ -103,6 +120,8 @@ function collect() {
     if (k === "auto_renewal") v = (v === "true") ? true : (v === "false" ? false : null);
     rec[k] = v;
   }
+  // ── 원본 한글 파일명을 extra.original_filename 에 보관 ──
+  rec.extra = { original_filename: originalName };
   return rec;
 }
 
