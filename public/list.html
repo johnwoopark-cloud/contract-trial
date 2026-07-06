@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>계약 목록</title>
+<style>
+  body { font-family: Pretendard, system-ui, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; color:#111827; }
+  h1 { font-size:20px; border-left:4px solid #2563eb; padding-left:8px; }
+  .bar { display:flex; gap:8px; align-items:center; margin:14px 0; flex-wrap:wrap; }
+  input[type=text] { padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; min-width:220px; }
+  button { padding:8px 14px; border:0; border-radius:6px; background:#2563eb; color:#fff; cursor:pointer; }
+  button.ghost { background:#fff; color:#2563eb; border:1px solid #93c5fd; }
+  #msg { font-size:13px; color:#6b7280; margin:6px 0 12px; }
+  .card { border:1px solid #e5e7eb; border-radius:10px; padding:14px 16px; margin-bottom:12px; background:#fff; }
+  .card h3 { margin:0 0 4px; font-size:15px; }
+  .meta { font-size:12px; color:#6b7280; margin-bottom:10px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:6px 16px; }
+  .kv { font-size:13px; display:flex; gap:6px; }
+  .kv .k { color:#6b7280; min-width:96px; }
+  .kv .v { color:#111827; word-break:break-all; }
+  .empty { color:#6b7280; font-size:14px; padding:24px 0; }
+</style>
+</head>
+<body>
+  <h1>계약 목록</h1>
+  <div class="bar">
+    <input type="text" id="q" placeholder="제목 / 상대방 검색" onkeydown="if(event.key==='Enter')load()" />
+    <button onclick="load()">검색</button>
+    <button class="ghost" onclick="document.getElementById('q').value='';load()">전체</button>
+  </div>
+  <div id="msg"></div>
+  <div id="list"></div>
+
+<script type="module">
+// 표시할 필드(라벨). 필요에 따라 추가/삭제하세요.
+const LABELS = {
+  counterparty_name:"상대방", counterparty_biz_no:"사업자번호",
+  start_date:"개시일", end_date:"종료일", auto_renewal:"자동갱신", renewal_notice:"갱신통보일",
+  drafter:"기안자", reviewer:"검토자", approver_direct:"직상위결재", approver_direct2:"부장결재",
+  approver_final:"최종결재", draft_doc_no:"기안문번호", draft_date:"기안일",
+  seal_person:"날인자", seal_date_serial:"날인일/일련번호", erp_contract_no:"ERP번호",
+  archive_keeper:"보관자", archive_file_author:"파일작성자", cover_created_date:"표지작성일",
+  status:"상태", source_file_path:"원본파일"
+};
+const fmt = (v) => v === true ? "Y" : v === false ? "N" : (v == null || v === "" ? "—" : String(v));
+
+async function load(){
+  const q = document.getElementById("q").value.trim();
+  document.getElementById("msg").textContent = "불러오는 중...";
+  try {
+    const res = await fetch("/.netlify/functions/list" + (q ? ("?q=" + encodeURIComponent(q)) : ""));
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error("서버가 JSON이 아닌 응답을 반환했습니다 (HTTP " + res.status + "). list 함수가 배포됐는지 확인하세요."); }
+    if (!data.ok) throw new Error(data.error || "조회 실패");
+
+    const rows = data.rows || [];
+    document.getElementById("msg").textContent = rows.length + "건";
+    const box = document.getElementById("list");
+    if (!rows.length) { box.innerHTML = '<div class="empty">저장된 계약이 없습니다.</div>'; return; }
+
+    box.innerHTML = rows.map(r => {
+      const cells = Object.keys(LABELS)
+        .filter(k => k in r)
+        .map(k => `<div class="kv"><span class="k">${LABELS[k]}</span><span class="v">${fmt(r[k])}</span></div>`)
+        .join("");
+      return `<div class="card">
+        <h3>${fmt(r.title)}</h3>
+        <div class="meta">id: ${fmt(r.id)}</div>
+        <div class="grid">${cells}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    document.getElementById("msg").textContent = "오류: " + e.message;
+  }
+}
+window.load = load;
+load();
+</script>
+</body>
+</html>
