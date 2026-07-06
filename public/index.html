@@ -12,10 +12,13 @@
   .ai input { border-color:#2563eb; background:#eff6ff; }
   .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   button { margin-top:16px; padding:10px 18px; border:0; border-radius:6px; background:#2563eb; color:#fff; font-size:14px; cursor:pointer; }
+  button.ghost { background:#fff; color:#2563eb; border:1px solid #93c5fd; }
   button:disabled { background:#9ca3af; cursor:not-allowed; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; margin:2px 4px 2px 0; }
   .err { background:#fee2e2; color:#991b1b; } .warn { background:#fef3c7; color:#92400e; } .ok { background:#dcfce7; color:#166534; }
   #msg { white-space:pre-wrap; font-size:13px; margin-top:8px; }
+  .opt { font-size:12px; font-weight:600; color:#374151; background:#f3f4f6; border:1px solid #e5e7eb; padding:1px 8px; border-radius:20px; margin-left:6px; vertical-align:middle; }
+  .step-box { border:1px dashed #cbd5e1; border-radius:8px; padding:14px 16px; margin-top:14px; background:#fafafa; }
 
   /* 인쇄 표지 */
   #printArea { display:none; }
@@ -38,9 +41,11 @@
 <body>
 
 <div class="screen">
-  <h2>1) 계약서 업로드</h2>
+  <h2>1) 계약서 업로드 <span class="opt">선택</span></h2>
+  <p style="font-size:13px;color:#6b7280;margin:6px 0 0;">PDF를 올리면 2) 계약 영역이 자동으로 채워집니다. 파일이 없으면 <b>건너뛰기</b>를 눌러 바로 직접 입력하세요.</p>
   <input type="file" id="pdf" accept="application/pdf" />
   <button id="btnExtract" onclick="runExtract()">AI 추출 시작</button>
+  <button class="ghost" type="button" onclick="skipStep1()">건너뛰기</button>
   <div id="fileInfo" style="font-size:13px;color:#374151;margin-top:6px;"></div>
   <div id="valid"></div>
 
@@ -78,8 +83,19 @@
     <div><label>표지 작성일 (YYYY-MM-DD)</label><input id="cover_created_date" /></div>
   </div>
 
-  <button id="btnSave" onclick="runSave()" disabled>검증 후 저장</button>
-  <button id="btnPrint" onclick="window.print()" disabled>표지 1페이지 인쇄</button>
+  <h2>4) 출력 · 파일 업로드 · 저장</h2>
+  <p style="font-size:13px;color:#6b7280;margin:6px 0 0;">입력 내용을 출력해 확인 → 편철·스캔한 새 파일을 업로드 → 저장 순으로 진행합니다.</p>
+
+  <button id="btnPreview" type="button" onclick="runPreview()">① 입력 내용 출력 (표지 인쇄)</button>
+
+  <div class="step-box">
+    <label style="margin-top:0;">② 날인 계약서 파일 업로드 <span style="color:#dc2626;">*</span></label>
+    <input type="file" id="finalPdf" />
+    <button id="btnFinalUpload" type="button" onclick="uploadFinalFile()">파일 업로드</button>
+    <div id="finalFileInfo" style="font-size:13px;color:#374151;margin-top:6px;">저장 시 이 파일이 계약 원본 파일로 연결됩니다.</div>
+  </div>
+
+  <button id="btnSave" onclick="runSave()">③ 저장</button>
   <div id="msg"></div>
 </div>
 
@@ -126,21 +142,29 @@ const MANUAL_FIELDS = ["drafter","reviewer","approver_direct","approver_direct2"
 let uploadedPath = null;
 let originalName = null;
 
-window.runExtract = async () => {
-  const file = document.getElementById("pdf").files[0];
-  if (!file) { alert("PDF를 선택하세요."); return; }
-  document.getElementById("btnExtract").disabled = true;
-  document.getElementById("msg").textContent = "업로드 및 추출 중...";
-
+// 업로드 공통 헬퍼 (1) 추출용 / (2) 최종 파일용 공통
+async function uploadToStorage(file){
   const ext = (file.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
   const nameNoExt = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "");
   const base = nameNoExt.length ? nameNoExt : "file";
-  uploadedPath = "uploads/" + Date.now() + "_" + base + "." + ext;
+  const path = "uploads/" + Date.now() + "_" + base + "." + ext;
+  const up = await sb.storage.from("contracts").upload(path, file, { contentType: file.type || "application/pdf" });
+  return { path, error: up.error };
+}
+
+// 1) 계약서 업로드 : 선택 사항
+window.runExtract = async () => {
+  const file = document.getElementById("pdf").files[0];
+  if (!file) { alert("PDF를 선택하세요. (파일이 없으면 '건너뛰기'를 누르세요.)"); return; }
+  document.getElementById("btnExtract").disabled = true;
+  document.getElementById("msg").textContent = "업로드 및 추출 중...";
+
   originalName = file.name;
   document.getElementById("fileInfo").textContent = "원본 파일명: " + originalName;
 
-  const up = await sb.storage.from("contracts").upload(uploadedPath, file, { contentType: file.type || "application/pdf" });
-  if (up.error) { document.getElementById("btnExtract").disabled = false; document.getElementById("msg").textContent = "업로드 실패: " + up.error.message; return; }
+  const { path, error } = await uploadToStorage(file);
+  if (error) { document.getElementById("btnExtract").disabled = false; document.getElementById("msg").textContent = "업로드 실패: " + error.message; return; }
+  uploadedPath = path;
 
   const r = await fetch("/.netlify/functions/extract", { method:"POST", body: JSON.stringify({ path: uploadedPath }) });
   const data = await r.json();
@@ -155,6 +179,12 @@ window.runExtract = async () => {
   document.getElementById("msg").textContent = "추출 완료. 원문과 대조 후 수정하세요.";
 };
 
+// 1) 건너뛰기
+window.skipStep1 = () => {
+  document.getElementById("msg").textContent = "1) 업로드를 건너뛰었습니다. 2)·3)을 직접 입력하세요.";
+  document.querySelectorAll("h2")[1]?.scrollIntoView({ behavior:"smooth", block:"start" });
+};
+
 function collect() {
   const rec = {};
   for (const k of [...CONTRACT_FIELDS, ...MANUAL_FIELDS]) {
@@ -167,6 +197,7 @@ function collect() {
   return rec;
 }
 
+// 추출 검증 결과는 표시만 함 (저장을 막지 않음 -> 1) 없이도 진행 가능)
 function renderValidation(val) {
   const box = document.getElementById("valid");
   let html = "";
@@ -174,7 +205,6 @@ function renderValidation(val) {
   val.warnings.forEach(w => html += '<span class="badge warn">경고: ' + w + '</span>');
   if (val.ok && !val.warnings.length) html = '<span class="badge ok">검증 통과</span>';
   box.innerHTML = html;
-  document.getElementById("btnSave").disabled = !val.ok;
 }
 
 function fillPrint(rec) {
@@ -196,8 +226,36 @@ function fillPrint(rec) {
   if (rec.title) document.getElementById("p_title_top").textContent = rec.title;
 }
 
+// 4) (1) 입력 내용 출력 : 저장 전, 표지 채워서 인쇄
+window.runPreview = () => {
+  const rec = collect();
+  fillPrint(rec);
+  document.getElementById("msg").textContent = "입력 내용을 표지로 출력합니다. 인쇄 후 편철·스캔한 파일을 업로드하세요.";
+  window.print();
+};
+
+// 4) (2) 새 파일 업로드
+window.uploadFinalFile = async () => {
+  const file = document.getElementById("finalPdf").files[0];
+  if (!file) { alert("업로드할 파일을 선택하세요."); return; }
+  const btn = document.getElementById("btnFinalUpload");
+  btn.disabled = true;
+  document.getElementById("msg").textContent = "파일 업로드 중...";
+
+  originalName = file.name;
+  const { path, error } = await uploadToStorage(file);
+  btn.disabled = false;
+  if (error) { document.getElementById("msg").textContent = "파일 업로드 실패: " + error.message; return; }
+
+  uploadedPath = path;
+  document.getElementById("finalFileInfo").textContent = "업로드 완료: " + file.name + " -> 저장 시 원본 파일로 연결됩니다.";
+  document.getElementById("msg").textContent = "파일 업로드 완료. 이제 (3) 저장을 누르세요.";
+};
+
+// 4) (3) 저장
 window.runSave = async () => {
   const record = collect();
+  if (!uploadedPath && !confirm("업로드된 파일이 없습니다. 파일 없이 저장할까요?")) return;
   document.getElementById("msg").textContent = "저장 중...";
   const r = await fetch("/.netlify/functions/save", {
     method:"POST",
@@ -207,7 +265,6 @@ window.runSave = async () => {
   if (data.ok) {
     document.getElementById("msg").textContent = "저장 완료. contract id = " + data.id;
     fillPrint(record);
-    document.getElementById("btnPrint").disabled = false;
   } else {
     document.getElementById("msg").textContent = "저장 실패: " + (data.errors ? data.errors.join(", ") : data.error);
   }
